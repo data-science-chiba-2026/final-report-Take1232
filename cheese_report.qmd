@@ -1,0 +1,89 @@
+---
+title: "Cheese: Milk types and Flavor by Country"
+author: "TidyTuesday analysis"
+format: docx
+---
+
+```{r}
+#| include: false
+# Load packages
+library(tidyverse)
+library(scales)
+raw_url <- 'https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2024/2024-06-04/cheeses.csv'
+```
+
+# Introduction
+
+This report examines relationships between milk types and flavor descriptors across countries using the TidyTuesday cheeses dataset (2024-06-04). The data are read directly from the TidyTuesday raw GitHub URL and not saved to disk.
+
+## Data load and cleaning
+
+```{r}
+#| echo: false
+cheeses <- readr::read_csv(raw_url, show_col_types = FALSE)
+# Select relevant fields
+df <- cheeses %>% select(cheese, country, milk, flavor)
+# Helper
+trim <- function(x) stringr::str_trim(x)
+sep_regex <- "\\s*(,|/|;|\\||&| and )\\s*"
+
+df2 <- df %>%
+  mutate(
+    country = if_else(is.na(country) | country == '', 'Unknown', country),
+    milk = if_else(is.na(milk) | milk == '', 'Unknown', milk),
+    flavor = if_else(is.na(flavor) | flavor == '', NA_character_, flavor)
+  ) %>%
+  separate_rows(country, sep = sep_regex) %>% mutate(country = trim(country)) %>%
+  separate_rows(milk, sep = sep_regex) %>% mutate(milk = trim(milk)) %>%
+  separate_rows(flavor, sep = sep_regex) %>% mutate(flavor = if_else(is.na(flavor), NA_character_, trim(flavor))) %>%
+  mutate(country = if_else(country == '', 'Unknown', country), milk = if_else(milk == '', 'Unknown', milk)) %>%
+  mutate(country = str_to_title(country), milk = str_to_lower(milk), flavor = if_else(is.na(flavor), NA_character_, str_to_lower(flavor)))
+
+# Filter flavors to meaningful tokens
+df2 <- df2 %>% filter(!is.na(flavor)) %>% mutate(flavor = str_replace_all(flavor, "[^a-z0-9' -]", ' '), flavor = str_squish(flavor)) %>% filter(nchar(flavor) >= 3)
+
+# Derive common milk groups
+milk_counts <- df2 %>% distinct(cheese, milk) %>% count(milk, sort = TRUE)
+common_milks <- milk_counts %>% filter(n >= 5) %>% pull(milk)
+df2 <- df2 %>% mutate(milk2 = if_else(milk %in% common_milks, milk, 'other'))
+
+# Top countries and flavors
+country_counts <- df2 %>% distinct(cheese, country) %>% count(country, name = 'n') %>% arrange(desc(n))
+top_countries <- country_counts %>% slice_head(n = 6) %>% pull(country)
+top_flavors <- df2 %>% distinct(cheese, flavor) %>% count(flavor, sort = TRUE) %>% slice_head(n = 15) %>% pull(flavor)
+```
+
+## Milk vs Flavor (heatmap)
+
+```{r}
+#| echo: false
+heat <- df2 %>% filter(flavor %in% top_flavors) %>% distinct(cheese, milk2, flavor) %>% count(milk2, flavor) %>% group_by(milk2) %>% mutate(pct = n / sum(n)) %>% ungroup()
+
+p1 <- ggplot(heat, aes(x = flavor, y = milk2, fill = pct)) +
+  geom_tile(color = 'white') +
+  scale_fill_gradient(low = 'white', high = 'steelblue', labels = scales::percent_format(accuracy = 1)) +
+  labs(x = NULL, y = 'Milk (grouped)', fill = 'Proportion', title = 'Top flavors by milk type (proportion within milk)') +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+print(p1)
+```
+
+## Milk composition by country (stacked)
+
+```{r}
+#| echo: false
+bardf <- df2 %>% distinct(cheese, country, milk2) %>% filter(country %in% top_countries) %>% count(country, milk2) %>% group_by(country) %>% mutate(pct = n / sum(n)) %>% ungroup()
+
+p2 <- ggplot(bardf, aes(x = reorder(country, - (n)), y = pct, fill = milk2)) +
+  geom_col(position = 'stack') +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  labs(x = NULL, y = 'Proportion of cheeses', fill = 'Milk type', title = 'Milk types composition for top countries') +
+  theme_minimal()
+
+print(p2)
+```
+
+## Notes
+
+This report is rendered with Quarto. It reads TidyTuesday raw data and produces Word output.
