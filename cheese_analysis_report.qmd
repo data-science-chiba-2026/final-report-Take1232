@@ -1,0 +1,456 @@
+---
+title: "チーズデータセット分析レポート"
+author: "竹村陽生"
+date: "2026/5/26"
+format:
+  docx:
+    toc: true
+    toc-title: "目次"
+    toc-depth: 3
+    theme: cosmo
+    code-fold: true
+    code-summary: "コードを表示"
+    fig-width: 8
+    fig-height: 5
+execute:
+  echo: false 
+---
+
+```{r}
+#| label: setup
+#| include: false
+
+library(tidyverse)
+```
+
+------------------------------------------------------------------------
+
+------------------------------------------------------------------------
+
+## はじめに
+
+### このデータセットと分析の目的
+
+　このデータセットは、TidyTuesdayプロジェクトの一環として提供されており、世界74か国から2046種類のチーズに関する情報を収集している。データは、[cheese.com](https://www.cheese.com/)というサイトから収集されている。世界中の様々な種類のチーズに関する情報をまとめたものである。各チーズの名前、原産国、地域、使用されるミルクの種類、脂肪分、食感、色、風味などの特徴が含まれている。
+
+　本分析では、以下の問いに答えることを目的とする。
+
+-   世界で最も多く使われているミルクの種類は何か？
+
+-   チーズの産出が多い国はどこか、またその国ではどのようなミルクが使われているか？
+
+-   ミルクの種類によって脂肪分に違いはあるか？
+
+-   チーズの色と脂肪分の間に関係はあるか？
+
+-   チーズと硬さの間に関係はあるか？
+
+```{r}
+#| label: load-data
+#| include: false
+
+cheeses <- read_csv(
+  "https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2024/2024-06-04/cheeses.csv"
+)
+```
+
+## 可視化
+
+### ミルク由来の分布
+
+```{r}
+#| label: milk-count
+
+milk_data <- cheeses %>%
+  drop_na(milk)
+
+milk_tidy <- milk_data %>%
+  separate_rows(milk, sep = ",") %>%
+  mutate(milk = str_trim(milk))
+
+milk_count <- milk_tidy %>%
+  count(milk) %>%
+  arrange(desc(n))
+```
+
+#### グラフ1：ミルク種別チーズ数（横棒グラフ）
+
+```{r}
+#| label: fig-milk-bar
+#| fig-cap: "ミルクの種類別チーズ数"
+
+ggplot(
+  milk_count,
+  aes(x = reorder(milk, n), y = n)
+) +
+  geom_col(fill = "#4E79A7") +
+  coord_flip() +
+  labs(
+    title = "Number of Cheeses by Milk Type",
+    x = "Milk Type",
+    y = "Count"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+#### グラフ2：ミルク種別チーズ割合（円グラフ）
+
+```{r}
+#| label: fig-milk-pie
+#| fig-cap: "ミルクの種類別チーズ割合"
+
+milk_ratio <- milk_count %>%
+  mutate(percent = n / sum(n) * 100)
+
+ggplot(
+  milk_ratio,
+  aes(x = "", y = percent, fill = milk)
+) +
+  geom_col(width = 1) +
+  coord_polar(theta = "y") +
+  labs(title = "Percentage of Cheese by Milk Type") +
+  theme_void()
+```
+
+------------------------------------------------------------------------
+
+### 国別 × ミルク由来の分析
+
+```{r}
+#| label: country-milk-prep
+
+country_milk_data <- cheeses %>%
+  drop_na(country, milk) %>%
+  separate_rows(country, sep = ",") %>%
+  mutate(country = str_trim(country)) %>%
+  separate_rows(milk, sep = ",") %>%
+  mutate(milk = str_trim(milk))
+
+country_milk_count <- country_milk_data %>%
+  count(country, milk) %>%
+  arrange(desc(n))
+
+top_countries <- country_milk_data %>%
+  count(country, sort = TRUE) %>%
+  slice_head(n = 20)
+
+top_country_names <- top_countries$country
+
+plot_data <- country_milk_count %>%
+  filter(country %in% top_country_names)
+```
+
+#### グラフ3：国別ミルク種類の積み上げ棒グラフ（TOP20）
+
+```{r}
+#| label: fig-country-milk-stacked
+#| fig-cap: "国別ミルク種類（チーズ数の多いTOP20か国）"
+#| fig-height: 7
+
+
+ggplot(
+  plot_data,
+  aes(x = reorder(country, n), y = n, fill = milk)
+) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Milk Types by Country (Top 20)",
+    x = "Country",
+    y = "Number of Cheeses",
+    fill = "Milk Type"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+#### グラフ4：国別ミルク割合グラフ（TOP20）
+
+```{r}
+#| label: fig-country-milk-ratio
+#| fig-cap: "国別ミルク種類の割合（TOP20）"
+#| fig-height: 7
+#| include: false
+
+country_ratio <- country_milk_count %>%
+  group_by(country) %>%
+  mutate(percent = n / sum(n) * 100) %>%
+  ungroup()
+
+plot_ratio <- country_ratio %>%
+  filter(country %in% top_country_names)
+
+ggplot(
+  plot_ratio,
+  aes(x = reorder(country, percent), y = percent, fill = milk)
+) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Percentage of Milk Types by Country (Top 20)",
+    x = "Country",
+    y = "Percentage (%)",
+    fill = "Milk Type"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+------------------------------------------------------------------------
+
+### ミルク由来別の国分析
+
+```{r}
+#| label: milk-country-prep
+#| include: false
+
+milk_country_data <- cheeses %>%
+  drop_na(milk, country) %>%
+  separate_rows(milk, sep = ",") %>%
+  separate_rows(country, sep = ",") %>%
+  mutate(
+    milk = str_trim(milk),
+    country = str_trim(country)
+  )
+
+milk_country_count <- milk_country_data %>%
+  count(milk, country) %>%
+  arrange(milk, desc(n))
+```
+
+#### グラフ5：ミルク種類別 国別チーズ数（ファセット）
+
+```{r}
+#| label: fig-milk-country-facet
+#| fig-cap: "ミルク種類ごとのチーズ産出国 TOP10"
+#| fig-height: 10
+#| include: false
+
+top_milk_country <- milk_country_count %>%
+  group_by(milk) %>%
+  slice_max(n, n = 10) %>%
+  ungroup()
+
+ggplot(
+  top_milk_country,
+  aes(x = reorder(country, n), y = n, fill = milk)
+) +
+  geom_col(show.legend = FALSE) +
+  coord_flip() +
+  facet_wrap(~ milk, scales = "free") +
+  labs(
+    title = "Top Countries by Milk Type",
+    x = "Country",
+    y = "Count"
+  ) +
+  theme_minimal(base_size = 12)
+```
+
+------------------------------------------------------------------------
+
+### ミルク由来と脂肪分の関係
+
+```{r}
+#| label: milk-fat-prep
+
+milk_fat_data <- cheeses %>%
+  select(cheese, milk, fat_content) %>%
+  drop_na(milk, fat_content) %>%
+  mutate(
+    fat_content = str_remove_all(fat_content, "%"),
+    fat_value = case_when(
+      str_detect(fat_content, "-") ~
+        (as.numeric(str_extract(fat_content, "^\\d+")) +
+         as.numeric(str_extract(fat_content, "\\d+$"))) / 2,
+      str_detect(fat_content, "\\d+") ~
+        as.numeric(str_extract(fat_content, "\\d+")),
+      TRUE ~ NA_real_
+    )
+  ) %>%
+  drop_na(fat_value) %>%
+  separate_rows(milk, sep = ",") %>%
+  mutate(milk = str_trim(milk))
+
+milk_count2 <- milk_fat_data %>%
+  count(milk, sort = TRUE)
+
+major_milk <- milk_count2 %>%
+  filter(n >= 5) %>%
+  pull(milk)
+
+plot_data_fat <- milk_fat_data %>%
+  filter(milk %in% major_milk)
+```
+
+#### グラフ6：ミルク種別の脂肪分分布（箱ひげ図）
+
+```{r}
+#| label: fig-milk-fat-boxplot
+#| fig-cap: "ミルク種別の脂肪分分布"
+
+ggplot(
+  plot_data_fat,
+  aes(x = reorder(milk, fat_value, median), y = fat_value)
+) +
+  geom_boxplot(fill = "#F28E2B", alpha = 0.7) +
+  coord_flip() +
+  labs(
+    title = "Fat Content Distribution by Milk Type",
+    x = "Milk Type",
+    y = "Fat Content (%)"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+------------------------------------------------------------------------
+
+### チーズの色と脂肪分の関係
+
+```{r}
+#| label: color-fat-prep
+
+color_fat_data <- cheeses %>%
+  select(cheese, color, fat_content) %>%
+  drop_na(color, fat_content) %>%
+  mutate(
+    fat_content = str_remove_all(fat_content, "%"),
+    fat_value = case_when(
+      str_detect(fat_content, "-") ~
+        (as.numeric(str_extract(fat_content, "^\\d+")) +
+         as.numeric(str_extract(fat_content, "\\d+$"))) / 2,
+      str_detect(fat_content, "\\d+") ~
+        as.numeric(str_extract(fat_content, "\\d+")),
+      TRUE ~ NA_real_
+    )
+  ) %>%
+  drop_na(fat_value) %>%
+  separate_rows(color, sep = ",") %>%
+  mutate(color = str_trim(color))
+
+color_count <- color_fat_data %>%
+  count(color, sort = TRUE)
+
+major_colors <- color_count %>%
+  filter(n >= 5) %>%
+  pull(color)
+
+plot_data_color <- color_fat_data %>%
+  filter(color %in% major_colors)
+```
+
+#### グラフ7：チーズの色別 脂肪分分布（箱ひげ図）
+
+```{r}
+#| label: fig-color-fat-boxplot
+#| fig-cap: "チーズの色別の脂肪分分布"
+
+ggplot(
+  plot_data_color,
+  aes(x = reorder(color, fat_value, median), y = fat_value)
+) +
+  geom_boxplot(fill = "#76B7B2", alpha = 0.7) +
+  coord_flip() +
+  labs(
+    title = "Fat Content Distribution by Cheese Color",
+    x = "Color",
+    y = "Fat Content (%)"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+------------------------------------------------------------------------
+
+### チーズの硬さと脂肪分の関係
+
+```{r}
+#| label: hardness-fat-prep
+
+texture_fat_data <- cheeses %>%
+  select(cheese, type, texture, fat_content) %>%
+  drop_na(fat_content) %>%
+  mutate(
+    fat_content = str_remove_all(fat_content, "%"),
+    fat_value = case_when(
+      str_detect(fat_content, "-") ~
+        (as.numeric(str_extract(fat_content, "^\\d+")) +
+         as.numeric(str_extract(fat_content, "\\d+$"))) / 2,
+      str_detect(fat_content, "\\d+") ~
+        as.numeric(str_extract(fat_content, "\\d+")),
+      TRUE ~ NA_real_
+    )
+  ) %>%
+  drop_na(fat_value) %>%
+  mutate(
+    hardness = case_when(
+      str_detect(type, regex("soft",     ignore_case = TRUE)) ~ "soft",
+      str_detect(type, regex("semi-hard",ignore_case = TRUE)) ~ "semi-hard",
+      str_detect(type, regex("hard",     ignore_case = TRUE)) ~ "hard",
+      str_detect(type, regex("firm",     ignore_case = TRUE)) ~ "firm",
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  drop_na(hardness)
+
+hardness_summary <- texture_fat_data %>%
+  group_by(hardness) %>%
+  summarise(
+    mean_fat   = mean(fat_value),
+    median_fat = median(fat_value),
+    count      = n()
+  ) %>%
+  arrange(desc(mean_fat))
+```
+
+#### グラフ8：硬さ別 脂肪分分布（箱ひげ図）
+
+```{r}
+#| label: fig-hardness-fat-boxplot
+#| fig-cap: "チーズの硬さ別の脂肪分分布"
+
+ggplot(
+  texture_fat_data,
+  aes(x = reorder(hardness, fat_value, median), y = fat_value)
+) +
+  geom_boxplot(fill = "#B07AA1", alpha = 0.7) +
+  coord_flip() +
+  labs(
+    title = "Fat Content Distribution by Cheese Hardness",
+    x = "Hardness",
+    y = "Fat Content (%)"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+#### グラフ9：硬さ別 平均脂肪分（棒グラフ）
+
+```{r}
+#| label: fig-hardness-fat-bar
+#| fig-cap: "チーズの硬さ別の平均脂肪分"
+
+ggplot(
+  hardness_summary,
+  aes(x = reorder(hardness, mean_fat), y = mean_fat)
+) +
+  geom_col(fill = "#B07AA1", alpha = 0.7) +
+  coord_flip() +
+  labs(
+    title = "Average Fat Content by Cheese Hardness",
+    x = "Hardness",
+    y = "Average Fat Content (%)"
+  ) +
+  theme_minimal(base_size = 14)
+```
+
+------------------------------------------------------------------------
+
+## 考察
+
+### データ可視化から何が読み取れるか？
+
+チーズの製造には牛が最も多く使われており、ヤギ・羊がそれに続く（図１、２）。 国別の傾向として、フランスやイタリアなどのヨーロッパ諸国がチーズの種類数で上位を占める（図３）。国別のミルク種類の割合は牛はほぼ全てで多い一方、ヤギはフランス・ギリシャ・スペイン・ポルトガルなど地中海沿岸の国に集中する傾向がある（図４）。植物由来のチーズはイギリスでしか見られていない（図５）。ミルクの種類によって脂肪分の分布に差が見られる。羊は他と比べて脂肪分が高い傾向があり、ばらつきも大きい（図６）。また、色によって脂肪分の中央値に違いがある。白色系のチーズは脂肪分が低めで、黄色系は高めの傾向が読み取れる（図７）。 ソフト系チーズは脂肪分のばらつきが大きく、ハード系は比較的安定した分布を示す（図８）。硬いチーズほど平均脂肪分がやや高い傾向が見られる。
+
+### データセットからどのような洞察が得られるか？
+
+チーズの特性（ミルクの種類・色・硬さ）はそれぞれ脂肪分と一定の関係を持っており、チーズの見た目や食感がその栄養成分を大まかに反映している可能性がある。また、産地とミルクの種類には結びつきがあり、各国の畜産文化や農業環境、食文化がチーズの多様性に影響していると考えられる。
+
+------------------------------------------------------------------------
+
+*レポート作成日: `r Sys.Date()`*
